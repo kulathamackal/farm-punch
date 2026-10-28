@@ -7,7 +7,7 @@ const LS = {
   get(k, d) { try { const v = localStorage.getItem('fp_' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('fp_' + k, JSON.stringify(v)); return true; } catch (e) { return false; } }
 };
-const S = { token: LS.get('tok', ''), boot: LS.get('boot', null), q: LS.get('q', []), errs: LS.get('errs', []), done: LS.get('done', []), grp: LS.get('grp', null), mode: LS.get('mode', 'tomy'), tomy: LS.get('tomy', null), tcode: LS.get('tcode', ''),
+const S = { token: LS.get('tok', ''), boot: LS.get('boot', null), q: LS.get('q', []), errs: LS.get('errs', []), done: LS.get('done', []), grp: LS.get('grp', null), mode: 'urg', ttab: LS.get('ttab', 'today'), tomy: LS.get('tomy', null), tcode: LS.get('tcode', ''),
   net: 'idle', lastOk: LS.get('lastOk', 0), lastTry: 0, busy: false, pairSent: false };
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -89,12 +89,12 @@ function stateOf(w) {
 // ---------- screens ----------
 function paint() {
   const n = S.q.length + (S.rqN || 0), e = S.errs.length + (S.rqE || 0);
-  $('mode').innerHTML = S.token ? `<button data-m="tomy" class="${S.mode === 'tomy' ? 'on' : ''}">📌 ജോലികൾ</button><button data-m="punch" class="${S.mode === 'punch' ? 'on' : ''}">👷 IN · OUT</button><button data-m="more" class="${S.mode === 'more' || S.mode === 'page' ? 'on' : ''}">☰ എല്ലാം</button>` : '';
+  $('mode').innerHTML = S.token ? `<button data-m="urg" class="${S.mode === 'urg' ? 'on' : ''}">🚨 അടിയന്തരം${urgN() ? ' <span class="mb">' + urgN() + '</span>' : ''}<br>Urgent</button><button data-m="tomy" class="${S.mode === 'tomy' ? 'on' : ''}">📋 ജോലികൾ<br>Works</button><button data-m="punch" class="${S.mode === 'punch' ? 'on' : ''}">👷 ഹാജർ<br>IN · OUT</button><button data-m="more" class="${S.mode === 'more' || S.mode === 'page' ? 'on' : ''}">☰ എല്ലാം<br>All pages</button>` : '';
   document.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { S.mode = b.dataset.m; LS.set('mode', S.mode); S.tomyNew = true; paint(); window.scrollTo(0, 0); });
   $('st').innerHTML = (S.net === 'sending' ? '<span class="pill">🔄 അയയ്ക്കുന്നു / sending…</span>' : n ? `<span class="pill w">📴 ${n} ഫോണിൽ — സിഗ്നൽ വന്നാൽ അയയ്ക്കും / saved on phone</span>` : S.lastOk ? `<span class="pill">🟢 എല്ലാം അയച്ചു / all sent · ${hm(S.lastOk)}</span>` : '<span class="pill">…</span>') +
     (e ? `<span class="pill e">⚠️ ${e} ശ്രദ്ധിക്കുക / check</span>` : '') + (S.net === 'weak' || S.net === 'offline' ? '<span class="pill w">സിഗ്നൽ ഇല്ല / no signal</span>' : '');
   if (!S.token) return pairScreen();
-  if (S.mode === 'tomy') return tomyScreen();
+  if (S.mode === 'tomy' || S.mode === 'urg') return tomyScreen();
   if (S.mode === 'more') return moreScreen();
   if (S.mode === 'page') return pageScreen();
   const B = S.boot;
@@ -138,7 +138,8 @@ function tomyScreen() {
   if (!S.tomyNew && $('all')) { const u = $('tupd'); if (u) u.textContent = tomyUpd(); return; }   // keep the open tab as it is; redraw only when new data came
   S.tomyNew = false;
   $('app').innerHTML = `<div class="note" id="tupd" style="margin:0 2px 8px">${tomyUpd()}</div><div id="tabs" style="display:flex;flex-wrap:wrap;gap:6px;padding:2px 0 10px"></div><div id="all"></div>`;
-  window.D = JSON.parse(JSON.stringify(S.tomy.d));
+  window.D = JSON.parse(JSON.stringify(S.tomy.d)); window.D.tab = S.mode === 'urg' ? 'urg' : (S.ttab || 'today');
+  try { sessionStorage.removeItem('tomyTab'); } catch (e) {}
   try { (0, eval)(S.tcode); } catch (e) { $('all').innerHTML = '<div class="card er">Could not show the list: ' + esc(e.message) + '</div>'; }
 }
 document.addEventListener('click', ev => {   // inside Tomy's page: IN / OUT links stay in the app; 🔄 refresh fetches a new list
@@ -147,6 +148,15 @@ document.addEventListener('click', ev => {   // inside Tomy's page: IN / OUT lin
   const r = ev.target.closest && ev.target.closest('#all button[onclick*="reload"]');
   if (r) { ev.preventDefault(); ev.stopImmediatePropagation(); flush(true); }
 }, true);
+// 🚨 Urgent as its own button (Kurian 28/10/2026): the same count as the Urgent tab on Tomy's page
+function urgN() { const D = S.tomy && S.tomy.d; if (!D || !D.items) return 0; const I = D.items;
+  return I.filter(x => x.g === 'late').length + I.filter(x => x.g === 'today' && x.cat === 'fert' && x.to === D.ds).length + I.filter(x => x.cat === 'stock' && x.g !== 'late').length +
+    I.filter(x => x.cat === 'book' && x.g !== 'late').length + I.filter(x => x.cat === 'gauge').length + ((D.buyNow || []).length ? 1 : 0); }
+document.addEventListener('click', ev => {   // a tab chip inside Tomy's page: keep the top buttons in step
+  const b = ev.target.closest && ev.target.closest('#tabs button[data-t]'); if (!b) return;
+  setTimeout(() => { const t = b.getAttribute('data-t'); if (t === 'urg') S.mode = 'urg'; else { S.mode = 'tomy'; S.ttab = t; LS.set('ttab', t); } paintTop(); }, 0);
+}, true);
+function paintTop() { const m = $('mode'); if (!m) return; m.querySelectorAll('[data-m]').forEach(x => x.classList.toggle('on', x.dataset.m === S.mode || (x.dataset.m === 'more' && S.mode === 'page'))); }
 function tomyUpd() { const t = S.tomy && S.tomy.at; if (!t) return ''; const m = Math.round((Date.now() - t) / 60000), old = dkey(t) !== dkey(Date.now());
   return (old ? '⚠️ ' : '') + 'പട്ടിക / list ' + (old ? new Date(t).toLocaleDateString('en-GB') + ' ' : '') + hm(t) + (m > 15 ? ' — സിഗ്നൽ വന്നാൽ പുതുക്കും / refreshes when there is signal' : ''); }
 function modal(html) { $('mbox').innerHTML = html; $('modal').style.display = html ? 'flex' : 'none'; }
@@ -264,7 +274,7 @@ async function appRun(fn, arg, ok, fail, win, pg) {   // google.script.run from 
 function appNav(href) {
   let u; try { u = new URL(href); } catch (e) { return; }
   const p = u.searchParams.get('p') || '', ds = u.searchParams.get('ds') || '';
-  if (p === 'casual' && !ds && S.mode === 'tomy') { S.mode = 'punch'; }
+  if (p === 'casual' && !ds && (S.mode === 'tomy' || S.mode === 'urg')) { S.mode = 'punch'; }
   else if (PNAME[p]) { S.mode = 'page'; S.page = { p, ds }; }
   else if (p === 'today' || p === 'tomy' || !p) { S.mode = 'tomy'; S.tomyNew = true; }
   else { window.open(href, '_blank'); return; }
