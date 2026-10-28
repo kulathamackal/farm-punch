@@ -7,7 +7,7 @@ const LS = {
   get(k, d) { try { const v = localStorage.getItem('fp_' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('fp_' + k, JSON.stringify(v)); return true; } catch (e) { return false; } }
 };
-const S = { token: LS.get('tok', ''), boot: LS.get('boot', null), q: LS.get('q', []), errs: LS.get('errs', []), done: LS.get('done', []), grp: LS.get('grp', null),
+const S = { token: LS.get('tok', ''), boot: LS.get('boot', null), q: LS.get('q', []), errs: LS.get('errs', []), done: LS.get('done', []), grp: LS.get('grp', null), mode: LS.get('mode', 'tomy'), tomy: LS.get('tomy', null), tcode: LS.get('tcode', ''),
   net: 'idle', lastOk: LS.get('lastOk', 0), lastTry: 0, busy: false, pairSent: false };
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -30,7 +30,7 @@ async function flush(withBoot) {
   S.busy = true; S.net = 'sending'; S.lastTry = Date.now(); paint();
   try {
     let n = 0, ops = []; for (const o of S.q) { if (ops.length >= 4 || (o.photo && n >= 1)) break; ops.push(o); if (o.photo) n++; }
-    const j = await call({ app: 'punch', token: S.token, sentAt: Date.now(), ops: ops.map(o => Object.assign({}, o, { label: undefined })), boot: true }, ops.some(o => o.photo) ? 120000 : 60000);
+    const j = await call({ app: 'punch', token: S.token, sentAt: Date.now(), ops: ops.map(o => Object.assign({}, o, { label: undefined })), boot: true, tomy: !!withBoot, ch: S.tomy && S.tomy.ch || '' }, ops.some(o => o.photo) ? 120000 : 90000);
     if (!j.ok) { if (j.relink) { S.token = ''; LS.set('tok', ''); } throw new Error(j.error || 'server'); }
     (j.results || []).forEach(r => {
       const i = S.q.findIndex(o => o.uid === r.uid); if (i < 0) return;
@@ -39,6 +39,7 @@ async function flush(withBoot) {
       else { delete o.photoKeep; S.errs.push(Object.assign(o, { error: r.error })); }
     });
     if (j.boot) { S.boot = j.boot; LS.set('boot', j.boot); }
+    if (j.tomy) { if (j.tomy.code) { S.tcode = j.tomy.code; LS.set('tcode', S.tcode); } S.tomy = { d: j.tomy.d, ch: j.tomy.ch, at: j.tomy.at }; LS.set('tomy', S.tomy); S.tomyNew = true; }
     S.net = 'ok'; S.lastOk = Date.now(); LS.set('lastOk', S.lastOk); save();
     if (S.q.length) setTimeout(() => flush(false), 500);
   } catch (e) {
@@ -86,13 +87,16 @@ function stateOf(w) {
 // ---------- screens ----------
 function paint() {
   const n = S.q.length, e = S.errs.length;
+  $('mode').innerHTML = S.token ? `<button data-m="tomy" class="${S.mode === 'tomy' ? 'on' : ''}">📌 ജോലികൾ / Works</button><button data-m="punch" class="${S.mode === 'punch' ? 'on' : ''}">👷 ഹാജർ IN · OUT</button>` : '';
+  document.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { S.mode = b.dataset.m; LS.set('mode', S.mode); S.tomyNew = true; paint(); window.scrollTo(0, 0); });
   $('st').innerHTML = (S.net === 'sending' ? '<span class="pill">🔄 അയയ്ക്കുന്നു / sending…</span>' : n ? `<span class="pill w">📴 ${n} ഫോണിൽ — സിഗ്നൽ വന്നാൽ അയയ്ക്കും / saved on phone</span>` : S.lastOk ? `<span class="pill">🟢 എല്ലാം അയച്ചു / all sent · ${hm(S.lastOk)}</span>` : '<span class="pill">…</span>') +
     (e ? `<span class="pill e">⚠️ ${e} ശ്രദ്ധിക്കുക / check</span>` : '') + (S.net === 'weak' || S.net === 'offline' ? '<span class="pill w">സിഗ്നൽ ഇല്ല / no signal</span>' : '');
   if (!S.token) return pairScreen();
+  if (S.mode === 'tomy') return tomyScreen();
   const B = S.boot;
   if (!B) { $('app').innerHTML = '<div class="card"><div class="h">ജോലിക്കാരുടെ പട്ടിക വരുന്നു… / Getting the worker list…</div><div class="note">ആദ്യത്തെ തവണ മാത്രം സിഗ്നൽ വേണം. / Needs signal the first time only.</div></div>'; return; }
   const grps = [{ id: '', name: 'Direct / നേരിട്ട്' }].concat(B.vendors).filter(g => B.workers.some(w => (w.vendorId || '') === g.id));
-  if (S.grp === null || !grps.some(g => g.id === S.grp)) S.grp = grps.length > 1 ? grps[1].id : '';
+  if (S.grp === null || !grps.some(g => g.id === S.grp)) S.grp = (grps.find(g => g.id) || grps[0] || { id: '' }).id;
   const today = dkey(Date.now()), stale = B.ds !== today;
   let h = `<div class="card"><div class="h">${esc(new Date().toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }))}</div>
     <div class="note">${stale ? '⚠️ പട്ടിക ' + esc(B.label) + ' ലേത് — സിഗ്നൽ വന്നാൽ പുതുക്കും. / List is from ' + esc(B.label) + '; it refreshes when there is signal.' : 'പട്ടിക പുതുക്കിയത് / list updated ' + hm(B.at)}</div>
@@ -124,6 +128,23 @@ function paint() {
     S.errs.splice(i, 1); delete o.error; delete o.code; o.photo = { b64: ph }; o.label = o.label.replace(/ \(code\)$/, '') + ' (photo)'; S.q.push(o); save(); flush(false); });
   const sn = $('sendNow'); if (sn) sn.onclick = () => flush(true);
 }
+// ---------- 📌 Tomy's whole page (v99): the farm app's own page, kept on the phone ----------
+function tomyScreen() {
+  if (!S.tomy || !S.tcode) { $('app').innerHTML = '<div class="card"><div class="h">ജോലിപ്പട്ടിക വരുന്നു… / Getting your list…</div><div class="note">ആദ്യത്തെ തവണ മാത്രം സിഗ്നൽ വേണം. / Needs signal the first time only.</div></div>'; return; }
+  if (!S.tomyNew && $('all')) { const u = $('tupd'); if (u) u.textContent = tomyUpd(); return; }   // keep the open tab as it is; redraw only when new data came
+  S.tomyNew = false;
+  $('app').innerHTML = `<div class="note" id="tupd" style="margin:0 2px 8px">${tomyUpd()}</div><div id="tabs" style="display:flex;flex-wrap:wrap;gap:6px;padding:2px 0 10px"></div><div id="all"></div>`;
+  window.D = JSON.parse(JSON.stringify(S.tomy.d));
+  try { (0, eval)(S.tcode); } catch (e) { $('all').innerHTML = '<div class="card er">Could not show the list: ' + esc(e.message) + '</div>'; }
+}
+document.addEventListener('click', ev => {   // inside Tomy's page: IN / OUT links stay in the app; 🔄 refresh fetches a new list
+  const a = ev.target.closest && ev.target.closest('#all a[href*="p=casual"], #all a[href*="p=now"]');
+  if (a && /p=casual/.test(a.href) && !/ds=/.test(a.href)) { ev.preventDefault(); S.mode = 'punch'; LS.set('mode', 'punch'); paint(); window.scrollTo(0, 0); return; }
+  const r = ev.target.closest && ev.target.closest('#all button[onclick*="reload"]');
+  if (r) { ev.preventDefault(); ev.stopImmediatePropagation(); flush(true); }
+}, true);
+function tomyUpd() { const t = S.tomy && S.tomy.at; if (!t) return ''; const m = Math.round((Date.now() - t) / 60000), old = dkey(t) !== dkey(Date.now());
+  return (old ? '⚠️ ' : '') + 'പട്ടിക / list ' + (old ? new Date(t).toLocaleDateString('en-GB') + ' ' : '') + hm(t) + (m > 15 ? ' — സിഗ്നൽ വന്നാൽ പുതുക്കും / refreshes when there is signal' : ''); }
 function modal(html) { $('mbox').innerHTML = html; $('modal').style.display = html ? 'flex' : 'none'; }
 $('modal').addEventListener('click', e => { if (e.target.id === 'modal') modal(''); });
 
@@ -165,7 +186,7 @@ function pairScreen() {
     <input id="pcode" inputmode="numeric" maxlength="6" placeholder="6-digit code" style="margin-top:10px"><button class="btn full" id="pgo">🔗 ബന്ധിപ്പിക്കുക / Link</button></div>`;
   $('preq').onclick = async () => { $('pmsg').textContent = '…'; try { const j = await call({ app: 'punch', op: 'pairReq', name: 'Tomy' }, 40000); $('pmsg').innerHTML = j.ok ? '<span class="ok">✔ കോഡ് അയച്ചു — കുര്യനോട് / സന്ധ്യയോട് ചോദിക്കുക / Code sent to Kurian & Sandhya</span>' : '<span class="er">' + esc(j.error) + '</span>'; } catch (e) { $('pmsg').innerHTML = '<span class="er">സിഗ്നൽ ഇല്ല / No signal — try where there is signal</span>'; } };
   $('pgo').onclick = async () => { const c = $('pcode').value.replace(/\D/g, ''); if (c.length !== 6) return; $('pmsg').textContent = '…';
-    try { const j = await call({ app: 'punch', op: 'pair', code: c }, 40000); if (!j.ok) throw new Error(j.error); S.token = j.token; LS.set('tok', j.token); S.boot = j.boot; LS.set('boot', j.boot); S.lastOk = Date.now(); LS.set('lastOk', S.lastOk); paint(); }
+    try { const j = await call({ app: 'punch', op: 'pair', code: c }, 40000); if (!j.ok) throw new Error(j.error); S.token = j.token; LS.set('tok', j.token); S.boot = j.boot; LS.set('boot', j.boot); S.lastOk = Date.now(); LS.set('lastOk', S.lastOk); paint(); flush(true); }
     catch (e) { $('pmsg').innerHTML = '<span class="er">' + esc(e.message || 'No signal') + '</span>'; } };
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
