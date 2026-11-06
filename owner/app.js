@@ -1,4 +1,4 @@
-// Kulathamackal Farm Tracker — owners' app (v1, 06/11/2026). Keeps the tracker page and the last data on the phone, opens at once,
+// Kulathamackal Farm Tracker — owners' app (v2, 06/11/2026: retries a failed update, takes a new tracker page at once). Keeps the tracker page and the last data on the phone, opens at once,
 // refreshes in the background, and asks the owner PIN only once per phone (the farm app gives the phone its own token).
 const EXEC = 'https://script.google.com/macros/s/AKfycbzvUFuUZ7MZuC6CDvaMf-Ej1-NJYm3dosqsHsZehHDyXxVO0IhPlNoBzt1-RaRdGzrmtQ/exec';
 const STALE = 150000;   // refresh the data when the copy on the phone is older than 2½ minutes
@@ -9,7 +9,11 @@ let TOK = LS.get('tok'), BY = LS.get('by') || 'kurian', inflight = null;
 const OA = window.OA = { main: '' };
 
 async function post(body) {
-  const r = await fetch(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ app: 'owner' }, body)) });
+  const ac = typeof AbortController === 'function' ? new AbortController() : null, tm = ac ? setTimeout(() => ac.abort(), 90000) : 0;
+  let r;
+  try { r = await fetch(EXEC, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ app: 'owner' }, body)), signal: ac ? ac.signal : undefined }); }
+  catch (e) { const x = new Error('no connection'); x.net = true; throw x; }
+  finally { if (tm) clearTimeout(tm); }
   const j = await r.json();
   if (!j.ok) throw new Error(j.error || 'error');
   return j;
@@ -49,17 +53,26 @@ OA.call = function (fn, args, ok, fail) {
 };
 function fresh(kick) {
   if (inflight) return inflight;
-  if (!navigator.onLine) { bar('📴 No signal — showing the copy from ' + ago(snapAge()), true); return Promise.reject(new Error('offline')); }
-  bar('🔄 Updating… (showing the copy from ' + ago(snapAge()) + ')');
-  inflight = post({ op: 'data', tok: TOK }).then(j => {
-    LS.set('snap', j.data); LS.set('snapAt', String(Date.now())); bar('');
-    if (kick) { try { const b = F.contentDocument && F.contentDocument.getElementById('refresh'); if (b) b.click(); } catch (e) {} }
-    return j.data;
-  }).catch(e => {
-    if (/not linked/i.test(e.message)) unpair('This phone is not linked any more — enter the PIN again.');
-    else bar('📴 Could not update (' + e.message + ') — showing the copy from ' + ago(snapAge()), true);
-    throw e;
-  }).finally(() => { inflight = null; });
+  if (!navigator.onLine) { bar('📴 No signal — showing the copy from ' + ago(snapAge()) + '. It updates by itself when the signal is back.', true); return Promise.reject(new Error('offline')); }
+  inflight = (async () => {
+    for (let attempt = 0; ; attempt++) {
+      bar((attempt ? '🔄 Trying again… ' : '🔄 Updating… ') + '(showing the copy from ' + ago(snapAge()) + ')');
+      try {
+        const j = await post({ op: 'data', tok: TOK });
+        LS.set('snap', j.data); LS.set('snapAt', String(Date.now())); bar('');
+        if (kick) { try { const b = F.contentDocument && F.contentDocument.getElementById('refresh'); if (b) b.click(); } catch (e) {} }
+        return j.data;
+      } catch (e) {
+        if (/not linked/i.test(e.message)) { unpair('This phone is not linked any more — enter the PIN again.'); throw e; }
+        if (e.net && attempt < 2) {   // weak signal, or the phone paused the app while the farm sheet was being read — try again shortly
+          bar('🔄 The farm sheet did not answer — trying again in a few seconds (showing the copy from ' + ago(snapAge()) + ')');
+          await new Promise(r => setTimeout(r, attempt ? 20000 : 8000)); continue;
+        }
+        bar('📴 Could not reach the farm sheet just now — showing the copy from ' + ago(snapAge()) + '. It tries again in a minute.', true);
+        throw e;
+      }
+    }
+  })().finally(() => { inflight = null; });
   return inflight;
 }
 const SHIM = 'try{sessionStorage.setItem("dashpin","device")}catch(e){}' +
@@ -74,7 +87,7 @@ function render(src) {
 }
 async function start() {
   const page = LS.get('page');
-  if (page) { render(page); post({ op: 'page', tok: TOK }).then(j => { if (j.page && j.page !== page) LS.set('page', j.page); }).catch(() => {}); return; }   // a newer page is used from the next opening
+  if (page) { render(page); post({ op: 'page', tok: TOK }).then(j => { if (j.page && j.page !== page) { LS.set('page', j.page); render(j.page); } }).catch(() => {}); return; }   // v2: a newer tracker page is shown at once
   $('wait').textContent = '📊 Loading the tracker for the first time…';
   try { const j = await post({ op: 'page', tok: TOK }); LS.set('page', j.page); render(j.page); }
   catch (e) { if (/not linked/i.test(e.message)) unpair('Enter the owner PIN to link this phone.'); else $('wait').textContent = 'Could not load the tracker: ' + e.message + ' — check the signal and open again.'; }
