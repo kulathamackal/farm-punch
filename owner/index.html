@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f6f43">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Farm Tracker">
+<title>Farm Tracker</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="../icon-192.png">
+<link rel="icon" href="../icon-192.png">
+<style>
+html,body{margin:0;height:100%;background:#fff;font-family:-apple-system,BlinkMacSystemFont,Roboto,sans-serif;color:#202124}
+#f{border:0;width:100%;height:100%;display:block}
+#bar{position:fixed;left:0;right:0;bottom:0;z-index:5;font-size:12px;line-height:1.3;padding:5px 12px calc(5px + env(safe-area-inset-bottom));background:rgba(31,111,67,.94);color:#fff;display:none}
+#bar.err{background:rgba(180,67,59,.95)}
+.box{max-width:420px;margin:14vh auto 0;padding:22px;background:#fff;border:1px solid #dadce0;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+.box h1{font-size:20px;margin:0 0 6px}.box p{font-size:14px;color:#5f6368;line-height:1.45;margin:0 0 14px}
+select,input{width:100%;box-sizing:border-box;font:inherit;font-size:18px;padding:11px;border:1px solid #bbb;border-radius:9px;margin-bottom:10px;background:#fff}
+button{width:100%;font:inherit;font-size:17px;font-weight:700;padding:13px;border:0;border-radius:10px;background:#1f6f43;color:#fff}
+button:disabled{opacity:.5}.msg{margin-top:10px;font-size:14px}.msg.e{color:#b4433b}
+#wait{text-align:center;margin-top:30vh;color:#5f6368;font-size:15px}
+</style>
+</head>
+<body>
+<div id="wait">📊 Kulathamackal Farm Tracker…</div>
+<div id="pair" class="box" hidden>
+  <h1>📊 Kulathamackal Farm Tracker</h1>
+  <p>Link this phone once with the owner PIN. After that the tracker opens at once with the last copy and updates itself — no PIN again on this phone.</p>
+  <select id="by"><option value="kurian">Kurian</option><option value="sandhya">Sandhya</option></select>
+  <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Owner PIN">
+  <button id="go">Link this phone</button>
+  <div class="msg" id="pm"></div>
+</div>
+<iframe id="f" title="Farm Tracker" hidden></iframe>
+<div id="bar"></div>
+<script src="app.js"></script>
+</body>
+</html>
